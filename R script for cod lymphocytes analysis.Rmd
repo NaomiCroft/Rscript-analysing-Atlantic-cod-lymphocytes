@@ -1,0 +1,840 @@
+---
+title: "Pseudotime_analysis"
+author: "Naomi Croft"
+date: "5/27/2020"
+output: html_document
+---
+
+Script has been adapted from Satija lab's vignettes. i.s. Seurat - Guided Clustering Tutorial found at https://satijalab.org/seurat/articles/pbmc3k_tutorial.html
+
+```{r}
+library(dyno)
+library(tidyverse)
+library(SingleCellExperiment)
+library(monocle)
+library(scater)
+library(ggplot2)
+library(ggthemes)
+library(ggbeeswarm)
+library(corrplot)
+library(Polychrome)
+library(slingshot)
+library(tradeSeq)
+library(Seurat)
+library(tidyseurat)
+library(scater)
+library(CATALYST)
+set.seed(1)
+
+```
+
+
+```{r}
+#Load seurat object and carry out dimesion reduction to idenntify cell clusters
+seurat <- fish.integrated
+DefaultAssay(object = seurat) <- "integrated"
+seurat <- RunUMAP(seurat, reduction = "pca", dims = 1:40)
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:40)
+seurat <- FindClusters(seurat, resolution = 0.21)
+DimPlot(seurat, reduction = "umap", pt.size = 1, label = TRUE, label.size = 4)
+```
+
+```{r}
+#Renname clusters based on differntial gene expression
+seurat <- RenameIdents(seurat, '0' = "B cells", '1' = "Thrombocytes", '2' = "Spleen stroma", '3' = "CD8+ T cells", '4' = "Erythrocytes", '5' = "MCP1b+ T cells", '6' = "Macrophages", '7' = "Neutrophils", '8' = "Myeloid cell type", '9' = "Proliferating lymphocytes", '10' = "GATA3+ cytotoxic cells", '11' = "Dendritic cell-like cluster 1", '12' = "Endothelial cells", '13' = "Dendritic cell-like cluster 2", '14' = "Plasma cells", '15' = "16", '16' ="17", '17' = "18")
+
+UMAP_allcells <- DimPlot(seurat, label = TRUE, label.size = 4, repel = TRUE) + NoLegend()
+
+UMAP_allcells
+```
+
+#Select all of the lymphocyte cells. The point of this step is to divide the "Proliferating lymphocytes" cluster into B lymphocytes and T lymphocytes where possible
+
+```{r}
+
+Lymphocytes_seurat <- seurat %>%
+  filter(celltype %in% c("B cells", "CD8+ T cells", "CCL2+ T cells", "Proliferating lymphocytes", "Plasma cells"))
+
+Lymphocytes_seurat <- RunUMAP(Lymphocytes_seurat, reduction = "pca", dims = 1:40)
+Lymphocytes_seurat <- FindNeighbors(Lymphocytes_seurat, reduction = "pca", dims = 1:40)
+Lymphocytes_seurat <- FindClusters(Lymphocytes_seurat, resolution = 0.2)
+DimPlot(object = Lymphocytes_seurat, reduction = "umap", label = TRUE, pt.size = 1)
+```
+
+```{r}
+##Removing celltype and celltype.treatment columns
+Lymphocytes_seurat <- Lymphocytes_seurat %>%
+  select(-celltype.treatment & -celltype)
+
+head(Lymphocytes_seurat@meta.data)
+```
+
+```{r}
+
+library(randomcoloR)
+
+#palette <- distinctColorPalette(30)
+palette <- c("#7CAE00", "#00BE67", "#F8766D", "#00BFC4", "#C77CFF", "#00A9FF", "#FF61CC", "#CD9600", "#93AA00", "#00BA38", "#00ADFA", "#5EB300", "#B79F00", "#FF61C3", "#00BF74", "#AE87FF")
+```
+
+###########################
+Creating Seurat object containing only the B cells
+
+```{r}
+DefaultAssay(object = Lymphocytes_seurat) <- "integrated"
+
+Bcell.integrated <- Lymphocytes_seurat %>%
+  filter(seurat_clusters %in% c("0", "6", "7", "8"))
+
+Bcell.integrated <- RunUMAP(Bcell.integrated, reduction = "pca", dims = 1:40)
+Bcell.integrated <- FindNeighbors(Bcell.integrated, reduction = "pca", dims = 1:40)
+#colData(sce) <- colData(sce)[,-8:-17]
+DefaultAssay(object = Bcell.integrated) <- "integrated"
+Bcell.integrated <- FindClusters(Bcell.integrated, resolution = 0.3)
+
+DimPlot(object = Bcell.integrated, reduction = "umap", label = TRUE, pt.size = 1, label.size = 8, cols = palette)
+```
+
+
+
+```{r}
+DefaultAssay(object = Bcell.integrated) <- "RNA"
+```
+
+```{r}
+# Find differentially expressed features between clusters
+cluster1markers <- FindMarkers(Bcell.integrated, ident.1 = "1", ident.2 = c("0", "2", "3", "4", "6", "7"))
+# view results
+print(x = head(x = cluster1markers, n = 50))
+```
+
+
+```{r}
+#No. of cells per cluster
+summary(Bcell.integrated@active.ident)
+
+```
+
+
+```{r}
+#Creating a 'summary Ig gene'
+
+#Create list with immunoglobulin genes
+immunoglobulin_genes <- c("LOC115543835", "LOC115543856", "LOC115533055", "LOC115537881", "LOC115543489", "LOC115543500", "LOC115543620", "LOC115543484", "LOC115543493", "LOC115543867", "LOC115537865", "LOC115543621", "LOC115559330", "LOC115559326", "LOC115543836", "LOC115559408", "LOC115559315", "cd8a", "LOC115543501", "LOC115559451")
+
+library(ggpubr)
+IG<-sprintf("Immunoglobulin_Genes%s", seq(1:length(immunoglobulin_genes)))
+Bcell.integrated.2@meta.data %>% transmute(seurat_clusters,
+            Mean = rowMeans(select(., IG))) %>% 
+  ggviolin( x="seurat_clusters", y="Mean")
+```
+
+Making a VlnPlot with key B cell markers
+```{r}
+palette <- c("#7CAE00", "#00BE67", "#F8766D", "#00BFC4", "#C77CFF", "#00A9FF", "#FF61CC", "#CD9600", "#93AA00", "#00BA38", "#00ADFA", "#5EB300", "#B79F00", "#FF61C3", "#00BF74", "#AE87FF")
+
+Bcellgenes = c("LOC115554304", "swap70", "cd79a", "spi1", "sh2d1a", "tnfrsf13b", "pa2g4", "LOC115549269", "LOC115556303", "ppib", "LOC115541796", "LOC115534170", "ccn2")
+
+VlnPlot(Bcell.integrated,features=c(Bcellgenes), pt.size = 0, stack=T, flip=T, assay = "RNA", fill.by = 'ident', cols = palette) + NoLegend() 
+
+
+```
+
+Carrying out pseudotime trajectory analysis, following the vignette: Slingshot: Trajectory Inference for Single-Cell Data
+https://bioconductor.org/packages/devel/bioc/vignettes/slingshot/inst/doc/vignette.html
+
+
+
+#Making a single cell object from a seurat object
+```{r}
+sce <- as.SingleCellExperiment(Bcell.integrated)
+
+#this has the cell classification
+table(sce$seurat_clusters)
+
+reducedDims(sce)$UMAP<-Bcell.integrated@reductions$umap@cell.embeddings
+```
+
+2.1 Gene Filtering
+
+To begin our analysis of the single lineage dataset, we need to reduce the dimensionality of our data and filtering out uninformative genes is a typical first step. This will greatly improve the speed of downstream analyses, while keeping the loss of information to a minimum.
+
+For the gene filtering step, we retained any genes robustly expressed in at least enough cells to constitute a cluster, making them potentially interesting cell-type marker genes. We set this minimum cluster size to 10 cells and define a gene as being “robustly expressed” if it has a simulated count of at least 3 reads.
+```{r}
+geneFilter <- apply(assays(sce)$counts,1,function(x){
+    sum(x >= 3) >= 10
+})
+sce <- sce[geneFilter, ]
+```
+
+3 Using Slingshot
+At this point, we have everything we need to run slingshot on our simulated dataset. This is a two-step process composed of identifying the global lineage structure with a cluster-based minimum spanning tree (MST) and fitting simultaneous principal curves to describe each lineage.
+
+These two steps can be run separately with the getLineages and getCurves functions, or together with the wrapper function, slingshot (recommended). We will use the wrapper function for the analysis of the single-trajectory dataset, but demonstrate the usage of the individual functions later, on the bifurcating dataset.
+
+The slingshot wrapper function performs both steps of trajectory inference in a single call. The necessary inputs are a reduced dimensional matrix of coordinates and a set of cluster labels. These can be separate objects or, in the case of the single-trajectory data, elements contained in a SingleCellExperiment object.
+
+To run slingshot with the dimensionality reduction produced by PCA and cluster labels identified by Gaussian mixutre modeling, we would do the following:
+
+```{r}
+
+sce <- slingshot(sce, clusterLabels = 'seurat_clusters', reducedDim = 'UMAP', approx_points = 100, extend = "n")
+
+```
+
+As noted above, if no clustering results are provided, it is assumed that all cells are part of the same cluster and a single curve will be constructed. If no dimensionality reduction is provided, slingshot will use the first element of the list returned by reducedDims.
+
+The output is a SingleCellExperiment object with slingshot results incorporated. All of the results are stored in a PseudotimeOrdering object, which is added to the colData of the original object and can be accessed via colData(sce)$slingshot. Additionally, all inferred pseudotime variables (one per lineage) are added to the colData, individually. To extract all slingshot results in a single object, we can use either the as.PseudotimeOrdering or as.SlingshotDataSet functions, depending on the form in which we want it. PseudotimeOrdering objects are an extension of SummarizedExperiment objects, which are flexible containers that will be useful for most purposes. SlingshotDataSet objects are primarily used for visualization, as several plotting methods are included with the package. Below, we visuzalize the inferred lineage for the single-trajectory data with points colored by pseudotime.
+```{r}
+summary(sce$slingPseudotime_1)
+```
+
+
+```{r}
+library(grDevices)
+colors <- colorRampPalette(brewer.pal(11,'Spectral')[-6])(100)
+plotcol <- colors[cut(sce$slingPseudotime_1, breaks=100)]
+
+plot(reducedDims(sce)$UMAP, col = plotcol, pch=16, asp = 1)
+
+lines(SlingshotDataSet(sce), lwd=2, col='black')
+```
+
+We can also see how the lineage structure was intially estimated by the cluster-based minimum spanning tree by using the type argument.
+```{r}
+
+plot(reducedDims(sce)$UMAP, col = palette[sce$seurat_clusters], pch=16, asp = 0.7)
+lines(SlingshotDataSet(sce), lwd=2, type = 'lineages', col = 'black')
+```
+
+
+# If you know the which cluster is the origin or last cluster, you can assign starting cluster/last cluster: 
+```{r}
+# get the lineages:
+lnes <- getLineages(reducedDim(sce,"UMAP"),
+                    sce$seurat_clusters)
+lnes@lineages
+```
+5.1 Identifying global lineage structure
+```{r}
+
+rd2 <- sce@int_colData$reducedDims$UMAP[,1:2] 
+
+# Get the lineages. You can define both starting cluster and end cluster. 
+
+lin1 <- getLineages(rd2, sce$seurat_clusters, start.clus = '6', end.clus = c('5', '7'))
+
+# inspect the data
+lin1
+```
+
+
+```{r}
+# define the clusters, to make the plotting command easier to use
+cl <- sce$seurat_clusters
+
+# plot  UMAP (i.e. rd2) with the minimal spanning tree from slingshot
+plot(rd2, col = palette[cl], asp = 1, pch = 16) 
+lines(SlingshotDataSet(lin1), lwd = 3, col = 'black', show.constraints = TRUE) 
+```
+
+Visualize the pseudotime or lineages
+
+You can draw plot with first pseudotime as x-axis, and y-axis is the cell type. If you have multiple lineages, cells that were identified as being specific to Lineage 2 will have NA values for slingPseudotime_1 
+
+```{r}
+# this define the cluster color. You can change it with different color scheme.
+library(Polychrome)
+library(ggbeeswarm)
+my_color <- createPalette(length(levels(sce$ident)), palette, M=1000)
+names(my_color) <- unique(as.character(sce$ident))
+
+slingshot_df <- data.frame(colData(sce))
+
+# re-order y-axis for better figure: This should be tailored with your own cluster names
+#Lineage 1
+slingshot_df$ycoord = factor(slingshot_df$ident, levels=c(6, 4, 2, 1, 3, 5))
+b1 <- ggplot(slingshot_df, aes(x = slingPseudotime_1, y = ycoord, 
+                              colour = ident)) +
+    geom_quasirandom(groupOnX = FALSE) + theme_classic() +
+    xlab("Lineage 1") + ylab("Cluster identity") +
+    scale_colour_manual(values = my_color) + theme(text = element_text(size = rel(4)), legend.position = "none")
+```
+
+```{r}
+#Lineage 2
+slingshot_df$ycoord = factor(slingshot_df$ident, levels=c(6, 4, 2, 1, 0, 7))
+b2 <- ggplot(slingshot_df, aes(x = slingPseudotime_2, y = ycoord, 
+                              colour = ident)) +
+    geom_quasirandom(groupOnX = FALSE) + theme_classic() +
+    xlab("Lineage 2") + ylab("Cluster identity") +
+    scale_colour_manual(values = my_color) + theme(text = element_text(size = rel(4)), legend.position = "none")
+```
+
+```{r}
+ggarrange(b1, b2, ncol = 1)
+```
+
+
+ You can also plot the different lineage separately to see the different trajectories, by adding for instance   linInd = 1 for lineage 1 and then look at linInd = 1 for lineage 2 etc:
+```{r}
+plot(rd2, col = palette[cl], asp = 1, pch = 16) 
+lines(SlingshotDataSet(lin1), linInd = 1, type='l')
+plot(rd2, col = palette[cl], asp = 1, pch = 16) 
+lines(SlingshotDataSet(lin1), linInd = 2, type='l')
+#plot(rd2, col = brewer.pal(9,"Set1")[cl], asp = 1, pch = 16) 
+#lines(SlingshotDataSet(lin1), linInd = 3, type='l')
+```
+
+Creating a heatmap and identifying temporally dynamic genes
+```{r}
+
+library(gam)
+t <- sce$slingPseudotime_2
+
+# for time, only look at the 100 most variable genes 
+Y <- log1p(assay(sce,"logcounts"))
+
+var100 <- names(sort(apply(Y,1,var),decreasing = TRUE))[1:100]
+Y <- Y[var100,]
+
+# fit a GAM with a loess term for pseudotime
+gam.pval <- apply(Y,1,function(z){
+    d <- data.frame(z=z, t=t)
+    suppressWarnings({
+      tmp <- gam(z ~ lo(t), data=d)
+    })
+    p <- summary(tmp)[3][[1]][2,3]
+    p
+})
+```
+
+## Organising layout of plot
+```{r}
+topgenes <- names(sort(gam.pval, decreasing = FALSE))[1:100]
+
+heatdata <- as.matrix(assays(sce)$logcounts[topgenes, order(t, na.last = NA)])
+heatclus <- sce$seurat_clusters[order(t, na.last = NA)]
+
+heatmap(heatdata, Colv = NA, scale = "column",
+        ColSideColors = brewer.pal(9,"Set1")[heatclus],cexRow = 1 ,cexCol = .1, margins = c(3,8), col= topo.colors(256))
+
+legend(x="bottomright", legend=c("LOW", "MEDIUM", "HIGH"),
+     fill=colorRampPalette(topo.colors(256))(3))
+
+```
+
+
+5.2 Smooth curves
+# get the smooth curves for the lineages. 
+
+```{r}
+crv1 <- getCurves(lin1)
+plot(rd2, col = brewer.pal(9,"Set1")[cl], asp = 1, pch = 16)
+lines(SlingshotDataSet(crv1), lwd = 3, col = 'black')
+```
+
+
+#Make line graphs of the temporally dynamic genes
+
+
+```{r}
+palette <- c("#7CAE00", "#00BE67", "#F8766D", "#00BFC4", "#C77CFF", "#00A9FF", "#FF61CC", "#CD9600", "#93AA00", "#00BA38", "#00ADFA", "#5EB300", "#B79F00", "#FF61C3", "#00BF74", "#AE87FF")
+colData(sce)$cluster_colour <- palette[sce$ident]
+```
+
+```{r}
+#sce_subset <- filterSCE(sce_tcell,  ident %in% c(1, 0, 6, 5))
+plotExpression(sce, features = "ier2", x = "slingPseudotime_2", colour = "ident", show_smooth = T) + geom_point(colour = colData(sce)$cluster_colour, alpha = 0.4) + theme(legend.position = "none") 
+```
+```{r}
+library(ggpubr)
+
+bcell_features <- c("pax5", "LOC115549432", "tnfrsf13b")
+p1 <- plotExpression(sce, features = bcell_features, x = "slingPseudotime_1", colour = "ident", show_smooth = TRUE, ncol=3, xlab = "Lineage 1") + scale_colour_manual(values = palette) + ylim(0,5.2)
+
+p2 <- plotExpression(sce, features = bcell_features, x = "slingPseudotime_2", colour = "ident", show_smooth = TRUE, ncol=3, xlab = "Lineage 2") + scale_colour_manual(values = palette) + ylim(0,5.2)
+
+
+p1_no_legend <- p1 + theme(legend.position = "none", strip.text.x = element_blank(), text = element_text(size = 17))
+p2_no_legend <- p2 + theme(legend.position = "none", strip.text.x =element_blank(), text = element_text(size = 17)) 
+ggarrange(p1_no_legend,p2_no_legend, ncol=1) 
+```
+
+
+```{r}
+
+DoHeatmap(Bcell.integrated, features = "LOC115544147", assay = "integrated", group.by = "seurat_clusters") + NoLegend()
+```
+
+###########################
+Creating Seurat object containing only the T cells
+
+```{r}
+DefaultAssay(object = Lymphocytes_fish.integrated) <- "integrated"
+
+Tcell.integrated <- Lymphocytes_fish.integrated %>%
+  filter(seurat_clusters %in% c("1", "2", "3", "4", "5"))
+
+Tcell.integrated <- RunUMAP(Tcell.integrated, reduction = "pca", dims = 1:40)
+Tcell.integrated <- FindNeighbors(Tcell.integrated, reduction = "pca", dims = 1:40)
+
+
+Tcell.integrated <- FindClusters(Tcell.integrated, resolution = 0.09)
+DimPlot(object = Tcell.integrated, reduction = "umap", label = TRUE, pt.size = 1, label.size = 8, cols = palette)
+```
+
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive
+# ones
+#Identify conserved cell type markers
+Tcell.integrated.markers <- FindAllMarkers(Tcell.integrated, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+Tcell.integrated.markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+```
+
+
+T cells only
+```{r}
+DefaultAssay(object = Tcell.integrated) <- "RNA"
+```
+
+
+Pseudotime analysis on T cells
+
+https://bioconductor.org/packages/devel/bioc/vignettes/slingshot/inst/doc/vignette.html
+Starting from 2.1
+
+#Making a single cell object from a Seurat object
+```{r}
+sce_tcell <- as.SingleCellExperiment(Tcell.integrated)
+
+table(sce_tcell$seurat_clusters)
+
+reducedDims(sce_tcell)$UMAP<-Tcell.integrated@reductions$umap@cell.embeddings
+```
+
+
+```{r}
+geneFilter <- apply(assays(sce_tcell)$counts,1,function(x){
+    sum(x >= 3) >= 10
+})
+sce_tcell <- sce_tcell[geneFilter, ]
+```
+
+
+3 Using Slingshot
+
+```{r}
+##This command gives all the things you can examine in the plot instead of GMM. i.e. celltype or ident
+
+sce_tcell <- slingshot(sce_tcell, clusterLabels = 'seurat_clusters', reducedDim = 'UMAP', approx_points = 100, extend = "n")
+
+```
+
+```{r}
+summary(sce_tcell$slingPseudotime_1)
+```
+
+```{r}
+library(grDevices)
+colors <- colorRampPalette(brewer.pal(11,'Spectral')[-6])(100)
+plotcol <- colors[cut(sce_tcell$slingPseudotime_1, breaks=100)]
+
+plot(reducedDims(sce_tcell)$UMAP, col = plotcol, pch=16, asp = 0.6)
+
+lines(SlingshotDataSet(sce_tcell), lwd=2, col='black')
+```
+
+
+```{r}
+plot(reducedDims(sce_tcell)$UMAP, col = palette[sce_tcell$seurat_clusters], pch=16, asp = 0.7)
+lines(SlingshotDataSet(sce_tcell), lwd=2, type = 'lineages', col = 'black')
+```
+
+
+# If you know the which cluster is the origin or last cluster, you can assign starting cluster/last cluster: 
+```{r}
+
+# get the lineages:
+lnes <- getLineages(reducedDim(sce_tcell,"UMAP"),
+                    sce_tcell$seurat_clusters)
+lnes@metadata$lineages 
+```
+
+5.1 Identifying global lineage structure
+```{r}
+
+rd2 <- sce_tcell@int_colData$reducedDims$UMAP[,1:2] 
+
+lin1 <- getLineages(rd2, sce_tcell$seurat_clusters)
+
+
+# inspect the data
+lin1
+```
+
+
+```{r}
+# define the clusters, to make the plotting command easier to use
+cl <- sce_tcell$seurat_clusters
+
+# plot  UMAP (i.e. rd2) with the minimal spanning tree from slingshot
+plot(rd2, col = palette[cl], asp = 0.5, pch = 16) 
+lines(SlingshotDataSet(lin1), lwd = 3, col = 'black', show.constraints = TRUE) 
+```
+
+You can also plot the different lineage separately to see the different trajectories, by adding for instance   linInd = 1 for lineage 1 and then look at linInd = 1 for lineage 2 etc:
+```{r}
+
+plot(rd2, col = palette[cl], asp = 1, pch = 16) 
+lines(SlingshotDataSet(lin1), linInd = 1, type='l')
+plot(rd2, col = palette[cl], asp = 1, pch = 16) 
+```
+
+```{r}
+slingshot_df <- data.frame(slingPseudotime_1=sce@colData$slingPseudotime_1, 
+                       seurat_clusters=sce@colData$seurat_clusters,
+                       ident=sce@colData$ident) 
+```
+
+
+```{r}
+
+slingshot_df$ycoord = factor(slingshot_df$ident, levels=c(3, 0, 2, 1, 4))
+
+new_palette <- c("#7CAE00", "#00BE67", "#F8766D", "#00BFC4", "#C77CFF", "#FF61CC", "#CD9600", "#93AA00", "#00BA38")
+
+a1 <- ggplot(slingshot_df, aes(x = slingPseudotime_1, y = ycoord, colour = ident)) +
+    geom_quasirandom(groupOnX = FALSE) + theme_classic() +
+    xlab("Lineage 1") + ylab("Cluster identity") +
+    scale_colour_manual(values = new_palette) +
+    theme(text = element_text(size = 15), legend.position = "none")
+a1
+```
+
+
+```{r}
+new_palette2 <- c("#7CAE00", "#00BE67", "#F8766D", "#00BFC4", "#C77CFF", "#FF61CC")
+
+slingshot_df$ycoord = factor(slingshot_df$seurat_clusters, levels=c(1, 0, 6, 2, 4))  
+
+a2 <- ggplot(slingshot_df, aes(x = slingPseudotime_2, y = ycoord, 
+                              colour = seurat_clusters)) +
+    geom_quasirandom(groupOnX = FALSE) + theme_classic() +
+    xlab("Lineage 2") + ylab("Cluster identity") +
+    scale_colour_manual(values = new_palette2) + theme(text = element_text(size = rel(4)), legend.position = "none")
+```
+ 
+```{r}              
+                            
+new_palette <- c("#7CAE00", "#00BE67", "#F8766D", "#00BFC4", "#00A9FF", "#FF61CC")
+slingshot_df$ycoord = factor(slingshot_df$seurat_clusters, levels=c(1, 0, 6, 5))  
+a3 <- ggplot(slingshot_df, aes(x = slingPseudotime_3, y = ycoord, 
+                              colour = seurat_clusters)) +
+    geom_quasirandom(groupOnX = FALSE) + theme_classic() +
+    xlab("Lineage 3") + ylab("Cluster identity") +
+    scale_colour_manual(values = new_palette) + theme(text = element_text(size = rel(4)), legend.position = "none")
+```
+```{r}
+ggarrange(a1, a2, a3, ncol = 1)
+```
+
+ 
+```{r}
+# 5.2 Smooth curves
+
+crv1 <- getCurves(lin1)
+plot(rd2, col = brewer.pal(9,"Set1")[cl], asp = 1, pch = 16)
+lines(SlingshotDataSet(crv1), lwd = 3, col = 'black')
+```
+
+ 
+ 5.4 multiple trajectories
+```{r}
+sce_mulitple_traj <- slingshot(rd2, cl, omega = TRUE, omega_scale=1, allow.breaks = T, approx_points = 100)
+plot(rd2, pch=16, asp = 0.6, col = palette[cl])
+lines(SlingshotDataSet(sce_mulitple_traj), type = 'l', lwd=2, col='black', show.constraints = TRUE)
+
+```
+
+```{r}
+sce_mulitple_traj@metadata$lineages
+```
+
+
+#########Creating heatmap
+```{r}
+
+library(gam)
+t <- sce_tcell$slingPseudotime_1
+
+# for time, only look at the 100 most variable genes 
+Y <- log1p(assay(sce_tcell,"logcounts"))
+
+var100 <- names(sort(apply(Y,1,var),decreasing = TRUE))[1:100]
+Y <- Y[var100,]
+
+# fit a GAM with a loess term for pseudotime
+gam.pval <- apply(Y,1,function(z){
+    d <- data.frame(z=z, t=t)
+    suppressWarnings({
+      tmp <- gam(z ~ lo(t), data=d)
+    })
+    p <- summary(tmp)[3][[1]][2,3]
+    p
+})
+```
+
+```{r}
+## Plot the top 100 genes' expression 
+library(randomcoloR)
+palette <- distinctColorPalette(30)
+
+topgenes <- names(sort(gam.pval, decreasing = FALSE))[1:100]
+
+heatdata <- as.matrix(assays(sce_tcell)$logcounts[topgenes, order(t, na.last = NA)])
+heatclus <- sce_tcell$seurat_clusters[order(t, na.last = NA)]
+
+heatmap(heatdata, Colv = NA, scale = "column",
+        ColSideColors = brewer.pal(9,"Set1")[heatclus],cexRow = 1 ,cexCol = .1, margins = c(3,8), col= topo.colors(256))
+
+```
+
+```{r}
+#Identify conserved cell type markers
+Tcell.integrated.markers <- FindAllMarkers(Tcell.integrated, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+Tcell.integrated.markers %>% group_by(cluster) %>% top_n(n = 30, wt = avg_log2FC)
+```
+
+```{r}
+# Find differentially expressed features between CD14+ and FCGR3A+ Monocytes
+cluster4markers <- FindMarkers(Tcell.integrated, ident.1 = "4", ident.2 = c("1"))
+# view results
+print(x = head(x = cluster4markers, n = 10))
+```
+
+
+
+```{r}
+
+Tcellgenes = c("LOC115560938", "LOC115532977", "LOC115544273", "LOC115548821", "LOC115548656", "LOC115548822", "LOC115556624", "ccr7", "LOC115532976", "LOC115529242", "LOC115541469", "LOC115549400", "LOC115554063", "LOC115558504", "incenp", "mki67", "pcna")
+
+
+VlnPlot(Tcell.integrated,features=c(Tcellgenes), pt.size = 0, stack=T, flip=T, assay = "RNA", fill.by = 'ident', cols = palette) + NoLegend()
+
+```
+
+```{r}
+#Printing two features on a plot and blending the colours
+FeaturePlot(object = Tcell.integrated, features = c("LOC115556624", "LOC115529242"), cols = c("lightgrey", "red", "blue"), pt.size = 0.3, blend = TRUE) 
+```
+
+
+```{r}
+#VlnPlot(Tcell.integrated, features = c("klf2"))
+
+a <- FeaturePlot(Tcell.integrated, features = c("LOC115556624", "LOC115529242", "LOC115541469", "pcna"), pt.siz = 0.1, , combine = FALSE, min.cutoff = 0, max.cutoff = 4)
+
+for(i in 1:length(a)) {
+  a[[i]] <- a[[i]] + NoAxes()
+}
+
+cowplot::plot_grid(plotlist = a)
+
+```
+
+```{r}
+#LOC115544273 M1-specific T cell receptor beta chain-like 
+#LOC115548821 tcra
+#LOC115548656 tcrg
+#LOC115548822 tcrd
+
+a <- FeaturePlot(Tcell.integrated, features = c("LOC115544273", "LOC115548821", "LOC115548656", "LOC115548822"), pt.siz = 0.1, , combine = FALSE, min.cutoff = 0, max.cutoff = 4)
+
+for(i in 1:length(a)) {
+  a[[i]] <- a[[i]] + NoAxes()
+}
+
+cowplot::plot_grid(plotlist = a)
+
+```
+
+
+
+
+```{r}
+palette <- c("#7CAE00", "#00BE67", "#F8766D", "#00BFC4", "#C77CFF", "#00A9FF", "#FF61CC")
+plotExpression(sce_tcell, features = "LOC115534379", x = "slingPseudotime_1", colour = "ident", show_smooth = TRUE) + scale_colour_manual(values = palette) + ylim(0,7) 
+```
+
+
+```{r}
+library(ggpubr)
+
+tcell_features <- c("LOC115534379", "LOC115545520", "hmgb2", "LOC115529242")
+p1 <- plotExpression(sce_tcell, features = tcell_features, x = "slingPseudotime_1", colour = "ident", show_smooth = TRUE, ncol=4, xlab = "Lineage 1") + scale_colour_manual(values = palette) + ylim(0,7)
+
+p2 <- plotExpression(sce_tcell, features = tcell_features, x = "slingPseudotime_2", colour = "ident", show_smooth = TRUE, ncol=4, xlab = "Lineage 2") + scale_colour_manual(values = palette) + ylim(0,7)
+
+
+p3 <-  plotExpression(sce_tcell, features = tcell_features, x = "slingPseudotime_3", colour = "ident", show_smooth = TRUE, ncol=4, xlab = "Lineage 3") + scale_colour_manual(values = palette) + ylim(0,7)
+
+p1_no_legend <- p1 + theme(legend.position = "none", strip.text.x = element_blank(), text = element_text(size = 17))
+p2_no_legend <- p2 + theme(legend.position = "none", strip.text.x =element_blank(), text = element_text(size = 17)) 
+p3_no_legend <- p3 + theme(legend.position = "none", strip.text.x =element_blank(), text = element_text(size = 17))
+ggarrange(p1_no_legend,p2_no_legend,p3_no_legend, ncol=1) 
+```
+
+
+```{r}
+
+FeaturePlot(fish.integrated, features = c("LOC115544273", "LOC115529242", "LOC115556624", "LOC115541469"), pt.size = 0.1, cols =   c("lightgrey", "blue"), blend.threshold = 0.7, combine = TRUE, min.cutoff = 0, max.cutoff = 4)
+```
+
+
+```{r}
+# TCR"LOC115544273"
+#MCP1b "LOC115529242"
+# CD8 "LOC115556624"
+# M130 "LOC115541469"
+
+#TCR vs CD8
+FeatureScatter(Tcell.integrated, feature1 = "LOC115544273", feature2 = "LOC115556624", jitter = TRUE) 
+
+CD8_positive_cells <- FetchData(Tcell.integrated, vars='LOC115556624') %>% 
+  filter_at("LOC115556624", all_vars(. > 0)) %>%
+  rownames()
+
+CD8_AND_TCR_positive_cells <- 
+  FetchData(Tcell.integrated, vars=c('LOC115556624', 'LOC115544273')) %>% 
+  filter_at("LOC115556624", all_vars(. > 0)) %>%
+  filter_at("LOC115544273", all_vars(. > 0)) %>%
+  rownames()
+
+CD8_neg_TCR_pos_cells <- 
+  FetchData(Tcell.integrated, vars=c('LOC115556624', 'LOC115544273')) %>%
+  filter_at("LOC115556624", all_vars(. == 0)) %>%
+  filter_at("LOC115544273", all_vars(. > 0)) %>%
+  rownames()
+
+CD8_pos_TCR_neg_cells <- 
+  FetchData(Tcell.integrated, vars=c('LOC115556624', 'LOC115544273')) %>%
+  filter_at("LOC115544273", all_vars(. == 0)) %>%
+  filter_at("LOC115556624", all_vars(. > 0)) %>%
+  rownames()
+
+CD8_neg_TCR_neg_cells <- 
+  FetchData(Tcell.integrated, vars=c('LOC115556624', 'LOC115544273')) %>%
+  filter_at("LOC115544273", all_vars(. == 0)) %>%
+  filter_at("LOC115556624", all_vars(. == 0)) %>%
+  rownames()
+
+#CD8 and TCR positive cells: MCP1b vs M130
+FeatureScatter(Tcell.integrated, feature1 = "LOC115529242", feature2 = "LOC115541469", cells= CD8_AND_TCR_positive_cells, shuffle = TRUE)
+
+#CD8 negative and TCR positive cells: MCP1b vs M130
+FeatureScatter(Tcell.integrated, feature1 = "LOC115529242", feature2 = "LOC115541469", cells= CD8_neg_TCR_pos_cells)
+
+```
+
+
+
+```{r}
+#Calculating CD8+ MCP1b+
+CD8.cutoff <- 1
+MCP1b.cutoff <- 1
+M130.cutoff <- 1
+TCR.cutoff <- 1
+
+#number of CD8 positive cells
+length(which(FetchData(Tcell.integrated, vars='LOC115556624') > CD8.cutoff))
+#number of MCP1b positive cells
+length(which(FetchData(Tcell.integrated, vars='LOC115529242') > MCP1b.cutoff))
+#number of M130 positive cells
+length(which(FetchData(Tcell.integrated, vars='LOC115541469') > M130.cutoff))
+
+#number of TCR positive cells
+length(which(FetchData(Tcell.integrated, vars='LOC115544273') > TCR.cutoff))
+
+#number of CD8+ and TCR+ cells
+length(which(FetchData(Tcell.integrated, vars='LOC115556624') > CD8.cutoff & FetchData(Tcell.integrated, vars='LOC115544273') > TCR.cutoff))
+
+
+#number of CD8+ and MCP1b+ cells
+length(which(FetchData(Tcell.integrated, vars='LOC115556624') > CD8.cutoff & FetchData(Tcell.integrated, vars='LOC115529242') > MCP1b.cutoff))
+#number of CD8+ and M130+ cells
+length(which(FetchData(Tcell.integrated, vars='LOC115556624') > CD8.cutoff & FetchData(Tcell.integrated, vars='LOC115541469') > M130.cutoff))
+#number of MCP1b+ and M130+ cells
+length(which(FetchData(Tcell.integrated, vars='LOC115529242') > MCP1b.cutoff & FetchData(Tcell.integrated, vars='LOC115541469') > M130.cutoff))
+#number of MCP1b+ and M130+ and CD8+ cells
+length(which(FetchData(Tcell.integrated, vars='LOC115529242') > MCP1b.cutoff & FetchData(Tcell.integrated, vars='LOC115556624') > CD8.cutoff & FetchData(Tcell.integrated, vars='LOC115541469') > M130.cutoff))
+```
+Creating venn diagram
+
+#Packages to install
+```{r}
+
+library(BioVenn)
+
+```
+
+#Features to put in venn diagramm
+```{r}
+CD8_positive_cells <- FetchData(Tcell.integrated, vars='LOC115556624') %>% 
+  filter_at("LOC115556624", all_vars(. > 0)) %>%
+  rownames()
+
+MCP1b_positive_cells <- 
+  FetchData(Tcell.integrated, vars="LOC115529242") %>% 
+  filter_at("LOC115529242", all_vars(. > 0)) %>%
+  rownames()
+
+M130_positive_cells <- 
+  FetchData(Tcell.integrated, vars="LOC115541469") %>% 
+  filter_at("LOC115541469", all_vars(. > 0)) %>%
+  rownames()
+
+TCR_positive_cells <- 
+  FetchData(Tcell.integrated, vars="LOC115544273") %>% 
+  filter_at("LOC115544273", all_vars(. > 0)) %>%
+  rownames()
+
+#Making venn diagram
+biovenn_1<-draw.venn(CD8_positive_cells, MCP1b_positive_cells, M130_positive_cells, title="Expression of key genes in T cells", nrtype="NULL", xtitle = "cd8", ytitle = "mcp1b", ztitle = "m130", subtitle = "", xt_s = 4, yt_s = 4, zt_s = 4, x_c = "#7CAE00", y_c = "#00A9FF", z_c = "#C77CFF")
+
+```
+
+
+```{r}
+DefaultAssay(object = Tcell.integrated) <- "RNA"
+Idents(Tcell.integrated) <- factor(Idents(Tcell.integrated))
+
+#Save the output from DotPlot (NB: Setting the dot.scale to 10 for the legend):
+plotval <- DotPlot(Tcell.integrated, features = rev("LOC115529242"), 
+                 cols = c("blue", "blue", "blue", "blue", "blue", "blue", "blue", "blue", "blue", "blue", "blue", "blue"), dot.scale = 10, split.by = "treatment") + RotatedAxis()
+
+# Decide the order of the treatments (i.e. the y-axis): 
+order_treatment<-as.factor(c("PreImm", "PostImm", "PreBoost", "PostBoost", 
+                   "NaivD-0", "VacD-0", "NaivD1","VacD1", 
+                   "NaivD7", "VacD7","NaivD15", "VacD15"))
+
+# Rearrange the output data from the original plot: 
+data_from_plot <- plotval$data %>% 
+  separate(col="id",sep="_", into = c("Cluster","Treatment"))
+data_from_plot$treatment<-factor(data_from_plot$Treatment, levels=order_treatment)
+
+# Make the plot.
+# Notice that the size-parameter needs to be scaled to fit the size of the plot.
+p<-ggplot(data_from_plot, aes(x=Cluster,y=Treatment)) + 
+  geom_point(colour = data_from_plot$colors, size=data_from_plot$pct.exp/10) 
+
+# Now prepare the legend (the first line is for the percent expressed
+# the second line is for the average expression) 
+plot_legend1 <- get_legend(plotval)
+plot_legend2 <- DotPlot(Tcell.integrated, features = rev("LOC115529242")) %>% get_legend()
+
+library(cowplot)
+plot_grid(p,plot_grid(NULL,plot_legend2[3],plot_legend1,NULL, ncol=1, rel_heights = c(0.5,1,1,0.5)), nrow=1,rel_widths =c(3,1))
+
+```
